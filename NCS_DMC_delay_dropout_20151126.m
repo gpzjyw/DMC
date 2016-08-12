@@ -2,13 +2,14 @@
 %              用离散状态空间方程替代之前的纯粹基于阶跃响应系数的描述；
 %              因为考虑了丢包，所以需要扩展A_gather矩阵，计算更多组(1+d+s)阶跃响应系数，s为最大连续丢包数；
 %  2016-08-07：考在传感器和控制器之间存在乱序问题，将这一环节引入到代码中；
+%  2016-08-12: 不考虑传感器和控制器之间的乱序问题，将问题简化成单边时延的情况；
 % ********************************************************************************** %
 
 clear all;clc;close all;
 
 d=4; % 最大时延为 d*T
 T=0.04; % 采样周期
-totalStep=100;% 仿真总步长
+totalStep=62;% 仿真总步长
 % timeSequence= d*T*[zeros(1,50)]; % 无时延的情况
 timeSequence = d*T*[0 rand(1,totalStep-3)-0.2 0 0];
 timeSequenceInt = timeSequence;
@@ -119,120 +120,6 @@ axis([0 timeSequenceLength*T -0.5*T (d+1)*T]);
 legend('时延','发生乱序的时刻','丢包的数据');
 xlabel('时间k');
 ylabel('\tau _k^{ca}');
-grid on
-hold on
-
-% ********************************************************************************** %
-% 传感器到控制器
-
-timeSequence_S2C = d*T*[0 rand(1,totalStep-3)-0.2 0 0];
-% timeSequence_S2C = d*T*[zeros(1,62)];
-timeSequenceInt_S2C = timeSequence_S2C;
-
-% 将时间序列转义为0,1,2,3......
-for i=1:timeSequenceLength
-    if timeSequence_S2C(i)<0
-        timeSequence_S2C(i)=0;
-    end
-    for j=0:d
-        if timeSequence_S2C(i)<=j*T
-            if timeSequence_S2C(i)>(j-1)*T
-                timeSequenceInt_S2C(i)=j;
-                break
-            end
-        end
-    end
-end
-
-% 设定丢包的概率，将发生丢包的时刻存入dropoutPoint_S2C，并将丢包时刻的时延设置为(d+1)T
-dropoutRate_S2C=[0 rand(1,timeSequenceLength-3) 0 0];
-dropoutPoint_S2C=[];
-for i=1:timeSequenceLength
-    if dropoutRate_S2C(i)>=0.9
-        timeSequenceInt_S2C(i)=d+1;
-        dropoutPoint_S2C=[dropoutPoint_S2C,i];
-    end
-end
-
-% 排列成一个2(d+1)*timeSequenceLength的矩阵，用 第1,3,5,...,(2d+1)行，第k列 表示k时刻是否收到
-% k,(k-1),(k-2)...,(k-d)时刻的输出值
-for i=1:timeSequenceLength
-    for j=0:d
-        if timeSequenceInt_S2C(i)==j
-            sensorSequence(2*j+1,i+j)=1;
-        end
-    end
-end
-
-disorderingPoint_S2C=[]; % 乱序点初始化
-for k=1:timeSequenceLength
-    
-    if k<=d+1
-        dValue=k-1;
-    end
-    
-    if timeSequenceInt_S2C(k)~=0
-        if k>3
-            for i=1:(dValue-1)
-                for j=(i+1):dValue
-                    if (timeSequenceInt_S2C(k-j)-timeSequenceInt_S2C(k-i))>=2
-                        if timeSequenceInt_S2C(k-j)==j
-                            flag=1;
-                        end
-                    end
-                end
-            end
-        end
-    end
-    
-	if flag==1
-        disorderingPoint_S2C=[disorderingPoint_S2C,k];
-        flag=0;
-	end    
-    
-end
-
-%取出未发生丢包的时刻的时延，存入timeSequenceIntDraw中；并将未丢包的时刻存入delayPoint中
-timeSequenceIntDraw_S2C=[];
-j=1;
-delayPoint_S2C=[];
-for i=1:timeSequenceLength
-    if i==dropoutPoint_S2C(j)
-        j=j+1;
-        if j>=length(dropoutPoint_S2C)
-            j=length(dropoutPoint_S2C);
-        end
-    else
-        timeSequenceIntDraw_S2C=[timeSequenceIntDraw_S2C,timeSequenceInt_S2C(i)];
-        delayPoint_S2C=[delayPoint_S2C,i];
-    end
-end
-
-%计算每个时刻的连续丢包数
-continuousDropoutNum_S2C=zeros(1,timeSequenceLength);
-for i=2:timeSequenceLength
-    if i<=d+1
-        dvalue=i-1;
-    end
-    for j=1:dvalue
-        if timeSequenceInt_S2C(i-j)==(d+1)
-            continuousDropoutNum_S2C(i)=continuousDropoutNum_S2C(i)+1;
-        else
-            break
-        end
-    end
-end
-
-figure(4)
-t=T*(1:timeSequenceLength);
-subplot(2,1,1);
-% plot(t,timeSequenceInt*T,'o',t,timeSequence,'.');
-plot(delayPoint_S2C*T,timeSequenceIntDraw_S2C*T,'*k',disorderingPoint_S2C*T,zeros(length(disorderingPoint_S2C),1),'ok',dropoutPoint_S2C*T,d*T,'xk');
-% title('各个点的时延分布');
-axis([0 timeSequenceLength*T -0.5*T (d+1)*T]);
-legend('时延','发生乱序的时刻','丢包的数据');
-xlabel('时间k');
-ylabel('\tau _k^{sc}');
 grid on
 hold on
 
@@ -365,26 +252,7 @@ for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
         X_state(:,k+1)=A_model_discrete*X_state(:,k)+B_model_discrete*actualControlValue(k+1);
         Y_outputValue(k+1)=C_model_discrete*X_state(:,k+1);
         
-        % 根据时延，将输出值存储到 sensorSequence 相应的位置
-        for temp1=0:dValue
-           if timeSequenceInt_S2C(k+1)==temp1
-               sensorSequence(2*(temp1+1),k+1+temp1)=Y_outputValue(k+1);
-           end
-        end
-        % 选取实际使用的输出值 actualOutputValue
-        actualSingal=0;
-        for temp2=0:dValue
-            if sensorSequence(2*temp2+1,k+1)==1
-                actualOutputValue(k+1)=sensorSequence(2*temp2+2,k+1);
-                actualSingal=1;
-                break
-            end
-        end
-        if actualSingal==0
-            actualOutputValue(k+1)=actualOutputValue(k);
-        end
-        
-        error(k+1)=actualOutputValue(k+1)-Y_predictedValue(1,k+1); % 根据(k+1)时刻y的实际值和预测值计算输出误差，以用于校正
+        error(k+1)=Y_outputValue(k+1)-Y_predictedValue(1,k+1); % 根据(k+1)时刻y的实际值和预测值计算输出误差，以用于校正
         tempCorrection=Y_predictedValue(:,k+1)+correction_h*h*error(k+1); % 运用启发式误差预测方法，修正(k+1)时刻的预测值
         S=[zeros(N-1,1) eye(N-1);zeros(1,N-1) 1]; % 给出移位矩阵S
         Y_predictedValue(:,k+1)=S*tempCorrection; % 给出(k+1)时刻
@@ -469,25 +337,7 @@ for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
         X_state(:,k+1)=A_model_discrete*X_state(:,k)+B_model_discrete*actualControlValue(k+1);
         Y_outputValue(k+1)=C_model_discrete*X_state(:,k+1);
         
-        % 使用最新的输出值
-        temp3=zeros(dValue+1,1);
-        for temp2=0:dValue
-            temp3(temp2+1)=timeSequenceInt_S2C(k+1-temp2)-(temp2+continuousDropoutNum_S2C(k+1-temp2));
-        end
-        % minIndex,最小值索引
-        % minValue，最小值
-        for temp2=0:dValue
-            if temp3(temp2+1)<=0
-                minIndex=temp2+continuousDropoutNum_S2C(k+1-temp2);
-                minValue=temp3(minIndex+1);
-                break
-            end
-        end
-        
-        sigma_S2C(k+1)=minIndex;
-        actualOutputValue(k+1)=Y_outputValue(k+1-minIndex);
-        
-        error(k+1)=actualOutputValue(k+1)-Y_predictedValue(1,k+1); % 根据(k+1)时刻y的实际值和预测值计算误差，以用于校正
+        error(k+1)=Y_outputValue(k+1)-Y_predictedValue(1,k+1); % 根据(k+1)时刻y的实际值和预测值计算误差，以用于校正
         tempCorrection=Y_predictedValue(:,k+1)+correction_h*h*error(k+1); % 运用启发式误差预测方法，修正(k+1)时刻的预测值
         S=[zeros(N-1,1) eye(N-1);zeros(1,N-1) 1]; % 给出移位矩阵S
         Y_predictedValue(:,k+1)=S*tempCorrection;
@@ -497,14 +347,6 @@ end
 figure(1)
 subplot(2,1,2);
 plot((1:timeSequenceLength)*T,sigma,'*k')
-xlabel('时间k');
-ylabel('\sigma(k)');
-grid on
-hold on
-
-figure(4)
-subplot(2,1,2);
-plot((1:timeSequenceLength)*T,sigma_S2C,'*k')
 xlabel('时间k');
 ylabel('\sigma(k)');
 grid on
@@ -563,8 +405,7 @@ for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
         Y_predictedValue(:,1)=Y_outputValue(1)*ones(N,1);
     end
         
-        % A=A_gather(:,((M*timeSequenceInt(k+1)+1):(M*timeSequenceInt(k+1)+M)));
-        A=A_gather(:,((M*(sigma(k+1)+sigma_S2C(k+1))+1):(M*(sigma(k+1)+sigma_S2C(k+1))+M)));
+        A=A_gather(:,((M*timeSequenceInt(k+1)+1):(M*timeSequenceInt(k+1)+M)));
         K=inv(A'*eye(P)*error_Q*A+eye(M)*control_R)*A'*eye(P)*error_Q;
         controlIncrement(:,k+1)=K*(Y_setValue-Y_predictedValue(1:P,k)); % 计算控制增量
         controlValue(k+1)=controlValue(k)+controlIncrement(1,k+1); % 根据控制增量计算控制量
@@ -595,24 +436,7 @@ for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
         X_state(:,k+1)=A_model_discrete*X_state(:,k)+B_model_discrete*actualControlValue(k+1);
         Y_outputValue(k+1)=C_model_discrete*X_state(:,k+1);
         
-        % 使用最新的输出值
-        temp3=zeros(dValue+1,1);
-        for temp2=0:dValue
-            temp3(temp2+1)=timeSequenceInt_S2C(k+1-temp2)-(temp2+continuousDropoutNum_S2C(k+1-temp2));
-        end
-        % minIndex,最小值索引
-        % minValue，最小值
-        for temp2=0:dValue
-            if temp3(temp2+1)<=0
-                minIndex=temp2+continuousDropoutNum_S2C(k+1-temp2);
-                minValue=temp3(minIndex+1);
-                break
-            end
-        end
-        
-        actualOutputValue(k+1)=Y_outputValue(k+1-minIndex);
-        
-        error(k+1)=actualOutputValue(k+1)-Y_predictedValue(1,k+1); % 根据(k+1)时刻y的实际值和预测值计算误差，以用于校正
+        error(k+1)=Y_outputValue(k+1)-Y_predictedValue(1,k+1); % 根据(k+1)时刻y的实际值和预测值计算误差，以用于校正
         tempCorrection=Y_predictedValue(:,k+1)+correction_h*h*error(k+1); % 运用启发式误差预测方法，修正(k+1)时刻的预测值
         S=[zeros(N-1,1) eye(N-1);zeros(1,N-1) 1]; % 给出移位矩阵S
         Y_predictedValue(:,k+1)=S*tempCorrection;
