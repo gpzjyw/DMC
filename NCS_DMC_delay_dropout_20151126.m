@@ -394,13 +394,13 @@ end
 % ********************************************************************************** %
 % 实际使用控制量序列
 figure(2)
-stairs((1:timeSequenceLength)*T,actualControlValue(1:timeSequenceLength),'.-k');
+stairs((1:timeSequenceLength)*T,actualControlValue(1:timeSequenceLength),'-.k');
 grid on
 hold on
 
 % 系统输出曲线
 figure(3)
-plot((1:timeSequenceLength)*T,Y_outputValue(1:timeSequenceLength),'.-k');
+plot((1:timeSequenceLength)*T,Y_outputValue(1:timeSequenceLength),'-.k');
 grid on
 hold on
 
@@ -512,7 +512,7 @@ hold on
 
 % 实际使用控制量序列
 figure(2)
-stairs((1:timeSequenceLength)*T,actualControlValue(1:timeSequenceLength),'-k');
+stairs((1:timeSequenceLength)*T,actualControlValue(1:timeSequenceLength),'--k');
 % title('控制量');
 xlabel('Time/s');
 ylabel('控制量输出');
@@ -521,7 +521,7 @@ hold on
 
 % 系统输出曲线
 figure(3)
-plot((1:timeSequenceLength)*T,Y_outputValue(1:timeSequenceLength),'-k');
+plot((1:timeSequenceLength)*T,Y_outputValue(1:timeSequenceLength),'--k');
 % title('输出曲线');
 xlabel('时间k');
 ylabel('输出y');
@@ -563,7 +563,8 @@ for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
         Y_predictedValue(:,1)=Y_outputValue(1)*ones(N,1);
     end
         
-        A=A_gather(:,((M*timeSequenceInt(k+1)+1):(M*timeSequenceInt(k+1)+M)));
+        % A=A_gather(:,((M*timeSequenceInt(k+1)+1):(M*timeSequenceInt(k+1)+M)));
+        A=A_gather(:,((M*(sigma(k+1)+sigma_S2C(k+1))+1):(M*(sigma(k+1)+sigma_S2C(k+1))+M)));
         K=inv(A'*eye(P)*error_Q*A+eye(M)*control_R)*A'*eye(P)*error_Q;
         controlIncrement(:,k+1)=K*(Y_setValue-Y_predictedValue(1:P,k)); % 计算控制增量
         controlValue(k+1)=controlValue(k)+controlIncrement(1,k+1); % 根据控制增量计算控制量
@@ -621,7 +622,7 @@ end
 % ********************************************************************************** %
 % 实际使用控制量序列
 figure(2)
-stairs((1:timeSequenceLength)*T,actualControlValue(1:timeSequenceLength),'--k');
+stairs((1:timeSequenceLength)*T,actualControlValue(1:timeSequenceLength),'-k');
 legend('不处理乱序问题','处理了乱序问题','改进DMC后');
 xlabel('Time/s');
 ylabel('控制量输出');
@@ -630,7 +631,7 @@ hold on
 
 % 系统输出曲线
 figure(3)
-plot((1:timeSequenceLength)*T,Y_outputValue(1:timeSequenceLength),'--k');
+plot((1:timeSequenceLength)*T,Y_outputValue(1:timeSequenceLength),'-k');
 legend('不处理乱序问题','处理了乱序问题','改进DMC后');
 xlabel('时间k');
 ylabel('输出y');
