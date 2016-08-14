@@ -186,7 +186,7 @@ end
 % 缓存根据不同A矩阵计算后的
 K_gather=zeros(2*d+1,P);
 for i=1:(2*d+1)
-    A=A_gather(:,(1:M)*i);
+    A=A_gather(:,(1:M)+(i-1)*M);
     K_gather(i,:)=[1,zeros(1,M-1)]*inv(A'*eye(P)*error_Q*A+eye(M)*control_R)*A'*eye(P)*error_Q;
 end
 
@@ -421,14 +421,6 @@ for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
         controlValue(k+1)=controlValue(k)+controlIncrement(1,k+1); % 根据控制增量计算控制量
         Y_predictedValue(:,k+1)=Y_predictedValue(:,k)+stepResponse(:,1)*controlIncrement(1,k+1); % 根据控制增量计算(k+1)时刻y的预测值 
         
-        if k<=d+1
-            dValue=k;
-        end
-        temp3=zeros(dValue+1,1);
-        for temp2=0:dValue
-            temp3(temp2+1)=timeSequenceInt(k+1-temp2)-(temp2+continuousDropoutNum(k+1-temp2));
-        end
-        
         minIndex=sigma(k+1);
         actualControlValue(k+1)=controlValue(k+1-minIndex);
 %         actualControlValue(k+1)=actualControlValue(k)+controlIncrement(1,k+1-minIndex);
@@ -477,7 +469,7 @@ for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
         controlValue(1,1)=1;
         % 实际控制量初始化
         actualControlValue=zeros(1,simulationTime);
-        actualControlValue=controlValue(1);
+        actualControlValue=controlValue(1,1);
         % 控制增量初始化
         controlIncrement=zeros(M,simulationTime);
         controlIncrement(:,1)=zeros(M,1);
@@ -518,7 +510,7 @@ for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
         end
         
         minIndex=sigma(k+1);
-        actualControlValue(k+1)=controlValue(1+minIndex,k+1-minIndex);
+        actualControlValue(k+1)=controlValue(1,k+1-minIndex);
 %         actualControlValue(k+1)=actualControlValue(k)+controlIncrement(1,k+1-minIndex);
 
         % 施加控制量之后系统的实际输出和状态量
