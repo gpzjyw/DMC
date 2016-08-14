@@ -455,6 +455,7 @@ ylabel('输出y');
 grid on
 hold on
 
+%{
 % ********************************************************************************** %
 % 根据时延，准确补偿时延和丢包对系统造成的影响
 for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
@@ -527,6 +528,7 @@ end
 figure(3)
 plot((1:timeSequenceLength)*T,Y_outputValue(1:timeSequenceLength),'-');
 hold on
+%}
 
 % ********************************************************************************** %
 % 使用冗余的控制增量来代替丢包或延时的控制量
