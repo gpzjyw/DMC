@@ -192,8 +192,6 @@ end
 
 A=A_gather(:,1:M);
 
-
-
 % ********************************************************************************** %
 % 仅仅选取k+1时刻的最新控制量，若该时刻无控制量到达，保持上一时刻控制量，无reordering
 % 反馈值，选择k+1时刻的最新输出值，若该时刻无输出值到达，保持上一时刻的输出值，无reordering
@@ -289,6 +287,7 @@ for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
         % Y_setValue=[Sv Sv ... Sv]',参考轨迹，即期望值
         Y_setValue=ones(P,1)*Sv; 
         % 取最优控制量计算公式中可以离线计算的部分，将计算结果赋给K
+        A=A_gather(:,1:M);
         K=inv(A'*eye(P)*error_Q*A+eye(M)*control_R)*A'*eye(P)*error_Q;
         % 控制量初始化
         controlValue=zeros(1,simulationTime);
@@ -380,13 +379,14 @@ grid on
 hold on
 
 % ********************************************************************************** %
-% 根据时延，准确补偿时延和丢包对系统造成的影响
+% 利用不同时延情况下的阶跃系数，进行时延和丢包补偿
 for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
     
     if k==1
         % Y_setValue=[Sv Sv ... Sv]',参考轨迹，即期望值
         Y_setValue=ones(P,1)*Sv; 
         % 取最优控制量计算公式中可以离线计算的部分，将计算结果赋给K
+        A=A_gather(:,1:M);
         K=inv(A'*eye(P)*error_Q*A+eye(M)*control_R)*A'*eye(P)*error_Q;
         % 控制量初始化
         controlValue=zeros(1,simulationTime);
@@ -415,9 +415,9 @@ for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
         Y_predictedValue(:,1)=Y_outputValue(1)*ones(N,1);
     end
         
-        A=A_gather(:,((M*timeSequenceInt(k+1)+1):(M*timeSequenceInt(k+1)+M)));
-        K=inv(A'*eye(P)*error_Q*A+eye(M)*control_R)*A'*eye(P)*error_Q;
-        controlIncrement(:,k+1)=K*(Y_setValue-Y_predictedValue(1:P,k)); % 计算控制增量
+        % A=A_gather(:,((M*timeSequenceInt(k+1)+1):(M*timeSequenceInt(k+1)+M)));
+        % K=inv(A'*eye(P)*error_Q*A+eye(M)*control_R)*A'*eye(P)*error_Q;
+        controlIncrement(1,k+1)=K_gather(timeSequenceInt(k+1)+1,:)*(Y_setValue-Y_predictedValue(1:P,k)); % 计算控制增量，取首项
         controlValue(k+1)=controlValue(k)+controlIncrement(1,k+1); % 根据控制增量计算控制量
         Y_predictedValue(:,k+1)=Y_predictedValue(:,k)+stepResponse(:,1)*controlIncrement(1,k+1); % 根据控制增量计算(k+1)时刻y的预测值 
         
@@ -440,7 +440,7 @@ end
 % 实际使用控制量序列
 figure(2)
 stairs((1:timeSequenceLength)*T,actualControlValue(1:timeSequenceLength),'-k');
-legend('不处理乱序问题','处理了乱序问题','改进DMC后');
+legend('不处理乱序问题','处理了乱序问题','补偿时延和丢包的DMC');
 xlabel('Time/s');
 ylabel('控制量输出');
 grid on
@@ -449,21 +449,23 @@ hold on
 % 系统输出曲线
 figure(3)
 plot((1:timeSequenceLength)*T,Y_outputValue(1:timeSequenceLength),'-k');
-legend('不处理乱序问题','处理了乱序问题','改进DMC后');
+legend('不处理乱序问题','处理了乱序问题','补偿时延和丢包的DMC');
 xlabel('时间k');
 ylabel('输出y');
 grid on
 hold on
 
-%{
+
 % ********************************************************************************** %
-% 根据时延，准确补偿时延和丢包对系统造成的影响
+% 利用DMC计算的冗余控制增量，进行控制量的时延和丢包补偿
+%{
 for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
     
     if k==1
         % Y_setValue=[Sv Sv ... Sv]',参考轨迹，即期望值
         Y_setValue=ones(P,1)*Sv; 
         % 取最优控制量计算公式中可以离线计算的部分，将计算结果赋给K
+        A=A_gather(:,1:M);
         K=inv(A'*eye(P)*error_Q*A+eye(M)*control_R)*A'*eye(P)*error_Q;
         % 控制量初始化
         controlValue=zeros(1+2*d,simulationTime);
@@ -492,13 +494,14 @@ for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
         Y_predictedValue(:,1)=Y_outputValue(1)*ones(N,1);
     end
         
-%         A=A_gather(:,((M*timeSequenceInt(k+1)+1):(M*timeSequenceInt(k+1)+M)));
-%         K=inv(A'*eye(P)*error_Q*A+eye(M)*control_R)*A'*eye(P)*error_Q;
+         % A=A_gather(:,((M*timeSequenceInt(k+1)+1):(M*timeSequenceInt(k+1)+M)));
+         K=inv(A'*eye(P)*error_Q*A+eye(M)*control_R)*A'*eye(P)*error_Q;
         
-        controlIncrement(1,k+1)=K_gather(1,:)*(Y_setValue-Y_predictedValue(1:P,k));
+        % controlIncrement(1,k+1)=K_gather(1,:)*(Y_setValue-Y_predictedValue(1:P,k));
+        controlIncrement(:,k+1)=K*(Y_setValue-Y_predictedValue(1:P,k));
         
         for i=1:(2*d+1)
-            controlValue(i,k+1)=controlValue(1,k)+K_gather(i,:)*(Y_setValue-Y_predictedValue(1:P,k));
+            controlValue(i,k+1)=controlValue(1,k)+controlIncrement(i,k+1);
         end
         Y_predictedValue(:,k+1)=Y_predictedValue(:,k)+stepResponse(:,1)*controlIncrement(1,k+1); % 根据控制增量计算(k+1)时刻y的预测值 
         
@@ -511,7 +514,76 @@ for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
         end
         
         minIndex=sigma(k+1);
-        actualControlValue(k+1)=controlValue(1,k+1-minIndex);
+        actualControlValue(k+1)=controlValue(minIndex+1,k+1-minIndex);
+%         actualControlValue(k+1)=actualControlValue(k)+controlIncrement(1,k+1-minIndex);
+
+        % 施加控制量之后系统的实际输出和状态量
+        X_state(:,k+1)=A_model_discrete*X_state(:,k)+B_model_discrete*actualControlValue(k+1);
+        Y_outputValue(k+1)=C_model_discrete*X_state(:,k+1);
+        
+        error(k+1)=Y_outputValue(k+1)-Y_predictedValue(1,k+1); % 根据(k+1)时刻y的实际值和预测值计算误差，以用于校正
+        tempCorrection=Y_predictedValue(:,k+1)+correction_h*h*error(k+1); % 运用启发式误差预测方法，修正(k+1)时刻的预测值
+        S=[zeros(N-1,1) eye(N-1);zeros(1,N-1) 1]; % 给出移位矩阵S
+        Y_predictedValue(:,k+1)=S*tempCorrection;
+    
+end
+
+figure(3)
+plot((1:timeSequenceLength)*T,Y_outputValue(1:timeSequenceLength),'-');
+hold on
+%}
+
+% ********************************************************************************** %
+% 利用不同时延下的阶跃系数，进行时延补偿，丢包控制量按最大时延进行补偿，校正所用的控制增量不补偿
+%{
+for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
+    
+    if k==1
+        % Y_setValue=[Sv Sv ... Sv]',参考轨迹，即期望值
+        Y_setValue=ones(P,1)*Sv; 
+        % 取最优控制量计算公式中可以离线计算的部分，将计算结果赋给K
+        A=A_gather(:,1:M);
+        K=inv(A'*eye(P)*error_Q*A+eye(M)*control_R)*A'*eye(P)*error_Q;
+        % 控制量初始化
+        controlValue=zeros(1+2*d,simulationTime);
+        controlValue(1,1)=1;
+        % 实际控制量初始化
+        actualControlValue=zeros(1,simulationTime);
+        actualControlValue=controlValue(1,1);
+        % 控制增量初始化
+        controlIncrement=zeros(M,simulationTime);
+        controlIncrement(:,1)=zeros(M,1);
+        % 校正向量
+        h=ones(N,1); 
+        % 输出误差初始化
+        error=zeros(1,simulationTime);
+        % 系统状态初始化
+        X_state=zeros(2,simulationTime);
+        X_state(:,1)=[0 0]';
+        % 输出值初始化
+        Y_outputValue=zeros(1,simulationTime);
+        Y_outputValue(1)=C_model_discrete*X_state(:,1);
+        % 实际获得输出值初始化
+        actualOutputValue=zeros(1,simulationTime);
+        actualOutputValue=Y_outputValue(1);
+        % 输出预测值初始化
+        Y_predictedValue=zeros(N,simulationTime);
+        Y_predictedValue(:,1)=Y_outputValue(1)*ones(N,1);
+    end
+        
+         % A=A_gather(:,((M*timeSequenceInt(k+1)+1):(M*timeSequenceInt(k+1)+M)));
+         % K=inv(A'*eye(P)*error_Q*A+eye(M)*control_R)*A'*eye(P)*error_Q;
+        
+        controlIncrement(1,k+1)=K_gather(1,:)*(Y_setValue-Y_predictedValue(1:P,k));
+        % controlIncrement(:,k+1)=K*(Y_setValue-Y_predictedValue(1:P,k));
+        
+        for i=1:(2*d+1)
+            controlValue(i,k+1)=controlValue(1,k)+K_gather(i,:)*(Y_setValue-Y_predictedValue(1:P,k));
+        end
+        Y_predictedValue(:,k+1)=Y_predictedValue(:,k)+stepResponse(:,1)*controlIncrement(1,k+1); % 根据控制增量计算(k+1)时刻y的预测值 
+        
+        minIndex=sigma(k+1);
+        actualControlValue(k+1)=controlValue(timeSequenceInt(k+1-minIndex)+1,k+1-minIndex);
 %         actualControlValue(k+1)=actualControlValue(k)+controlIncrement(1,k+1-minIndex);
 
         % 施加控制量之后系统的实际输出和状态量
