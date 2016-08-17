@@ -419,7 +419,8 @@ for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
         % K=inv(A'*eye(P)*error_Q*A+eye(M)*control_R)*A'*eye(P)*error_Q;
         controlIncrement(1,k+1)=K_gather(timeSequenceInt(k+1)+1,:)*(Y_setValue-Y_predictedValue(1:P,k)); % 计算控制增量，取首项
         controlValue(k+1)=controlValue(k)+controlIncrement(1,k+1); % 根据控制增量计算控制量
-        Y_predictedValue(:,k+1)=Y_predictedValue(:,k)+stepResponse(:,1)*controlIncrement(1,k+1); % 根据控制增量计算(k+1)时刻y的预测值 
+        Y_predictedValue(:,k+1)=Y_predictedValue(:,k)+stepResponse(:,1)*controlIncrement(1,k+1); % 根据控制增量计算(k+1)时刻y的预测值
+        % Y_predictedValue(:,k+1)=Y_predictedValue(:,k)+stepResponse(:,timeSequenceInt(k+1))*controlIncrement(1,k+1); % 根据控制增量计算(k+1)时刻y的预测值，应用对应时延的阶跃响应精确计算
         
         minIndex=sigma(k+1);
         actualControlValue(k+1)=controlValue(k+1-minIndex);
@@ -545,11 +546,11 @@ for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
         A=A_gather(:,1:M);
         K=inv(A'*eye(P)*error_Q*A+eye(M)*control_R)*A'*eye(P)*error_Q;
         % 控制量初始化
-        controlValue=zeros(1+2*d,simulationTime);
-        controlValue(1,1)=1;
+        controlValueArray=zeros(1+2*d,simulationTime);
+        controlValueArray(1,1)=1;
         % 实际控制量初始化
         actualControlValue=zeros(1,simulationTime);
-        actualControlValue=controlValue(1,1);
+        actualControlValue=controlValueArray(1,1);
         % 控制增量初始化
         controlIncrement=zeros(M,simulationTime);
         controlIncrement(:,1)=zeros(M,1);
@@ -578,12 +579,12 @@ for k=1:timeSequenceLength-1 % N应该与timeSequenceLength保持一致
         % controlIncrement(:,k+1)=K*(Y_setValue-Y_predictedValue(1:P,k));
         
         for i=1:(2*d+1)
-            controlValue(i,k+1)=controlValue(1,k)+K_gather(i,:)*(Y_setValue-Y_predictedValue(1:P,k));
+            controlValueArray(i,k+1)=controlValueArray(1,k)+K_gather(i,:)*(Y_setValue-Y_predictedValue(1:P,k));% 欲达到前一种效果，需要记在这里根据时延选取合适的controlValueArray
         end
         Y_predictedValue(:,k+1)=Y_predictedValue(:,k)+stepResponse(:,1)*controlIncrement(1,k+1); % 根据控制增量计算(k+1)时刻y的预测值 
         
         minIndex=sigma(k+1);
-        actualControlValue(k+1)=controlValue(timeSequenceInt(k+1-minIndex)+1,k+1-minIndex);
+        actualControlValue(k+1)=controlValueArray(timeSequenceInt(k+1-minIndex)+1,k+1-minIndex);
 %         actualControlValue(k+1)=actualControlValue(k)+controlIncrement(1,k+1-minIndex);
 
         % 施加控制量之后系统的实际输出和状态量
