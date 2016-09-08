@@ -2,6 +2,8 @@
 %                             2.乱序的处理，执行器选取最新控制信号，控制器也选用最新的输出值；
 %                             3.控制器的校正部分，所用的控制增量根据时延 传感器-控制器 时延确定；
 %                             4.控制器采用事件驱动，收到一个输出值驱动一次事件，但选用的输出值为最新的输出值；
+%  2016-09-04：现在做如下考虑: 1.去除丢包因素，仅仅考虑时延和乱序的情况；
+%                             2.控制器和执行器设置缓冲区，将不确定的时延转化为若干固定时延 0,1,2,3,...,d；
 % ********************************************************************************** %
 
 clear all;clc;close all;
@@ -27,26 +29,6 @@ for i=1:totalStep
                 break
             end
         end
-    end
-end
-
-% 设定丢包的概率，将发生丢包的时刻存入dropoutPoint，并将丢包时刻的时延设置为(d+1)T，发生丢包的概率为10%
-dropoutRate=[0 rand(1,totalStep-d-1) zeros(1,d)];
-dropoutPoint=[]; % 丢包时刻的集合
-for i=1:totalStep
-    if dropoutRate(i)>=0.9
-        timeSequenceInt(i)=d+1;
-        dropoutPoint=[dropoutPoint,i];
-    end
-end
-
-% 确定每个时刻之前的连续丢包数
-continuousDropoutNum=zeros(1,totalStep);
-for i=1:length(dropoutPoint)
-    if continuousDropoutNum(dropoutPoint(i))~=0
-        continuousDropoutNum(dropoutPoint(i)+1)=continuousDropoutNum(dropoutPoint(i))+1;
-    else
-        continuousDropoutNum(dropoutPoint(i)+1)=1;
     end
 end
 
@@ -84,15 +66,8 @@ timeSequenceIntDraw=[];
 j=1;
 delayPoint=[]; % 时延时刻的集合
 for i=1:totalStep
-    if i==dropoutPoint(j)
-        j=j+1;
-        if j>=length(dropoutPoint)
-            j=length(dropoutPoint);
-        end
-    else
-        timeSequenceIntDraw=[timeSequenceIntDraw,timeSequenceInt(i)];
-        delayPoint=[delayPoint,i];
-    end
+    timeSequenceIntDraw=[timeSequenceIntDraw,timeSequenceInt(i)];
+    delayPoint=[delayPoint,i];
 end
 
 % 计算sigma(k)，执行器根据该值选取最新的控制增量
@@ -127,9 +102,9 @@ end
 figure(1)
 t=T*(1:totalStep);
 subplot(2,1,1);
-plot(delayPoint*T,timeSequenceIntDraw*T,'*k',disorderingPoint*T,zeros(length(disorderingPoint),1),'ok',dropoutPoint*T,d*T,'xk');
+plot(delayPoint*T,timeSequenceIntDraw*T,'*k',disorderingPoint*T,zeros(length(disorderingPoint),1),'ok');
 axis([0 totalStep*T -0.5*T (d+1)*T]);
-legend('时延','发生乱序的时刻','丢包的数据');
+legend('时延','发生乱序的时刻');
 xlabel('时间k');
 ylabel('\tau _k');
 grid on
