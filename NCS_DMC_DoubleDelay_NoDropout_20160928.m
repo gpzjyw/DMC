@@ -7,17 +7,16 @@
 %  2016-09-20：现在做如下考虑: 1.控制器采用事件驱动，执行器采用时间驱动的工作方式；
 %                             2.控制器对乱序的数据包进行主动丢弃；
 %  2016-09-28：先增加一对照组：1.处理乱序问题，但不对时延进行补偿
+%                             2.更改为传输控制量
 % ********************************************************************************** %
 
 clear all;clc;close all;
 
-d=5; % 最大时延为 d*T
+d=4; % 最大时延为 d*T
 T=0.04; % 采样周期
 totalStep=75;% 仿真总步长
 timeSequence = d*T*[0 rand(1,totalStep-d-1)-0.2 zeros(1,d)]; % 每个时刻数据包的时延大小（发生时延的概率为80%）
 timeSequenceInt = timeSequence; % 缓冲区的存在，将时延转化为固定周期数的时延：0,T,2T,...,dT
-timeSequenceLength = length(timeSequence);
-controlSequence=zeros(2*(d+1),totalStep);
 
 % 总时延
 % 将时延序列转义为0,1,2,3....
@@ -36,7 +35,7 @@ for i=1:totalStep
     end
 end
 
-% 计算sigma(k)，执行器根据该值选取最新的控制增量，适用于：控制器不处理乱序，执行器处理乱序
+% 计算sigma(k)，执行器根据该值选取最新的控制量，适用于：控制器不处理乱序，执行器处理乱序
 sigma_SC_noreorder=zeros(1,totalStep);
 for k=1:totalStep
     for i=0:(d+1)
@@ -50,17 +49,22 @@ for k=1:totalStep
     end
 end
 
-% 根据时延，计算任一时刻最新到达的控制增量，适用于：控制器不处理乱序，执行器不处理乱序
+% 根据时延，计算任一时刻最新到达的控制量，适用于：控制器不处理乱序，执行器不处理乱序
 latestArrive_SC_noreorder=zeros(1,totalStep);
 for k=1:totalStep
+    flag=0;
     for i=0:d
         if k-i<=0
             break;
         end
         if timeSequenceInt(k-i)==i
            latestArrive_SC_noreorder(k)=i;
+           flag=1;
            break;
         end
+    end
+    if flag==0
+        latestArrive_SC_noreorder(k)=latestArrive_SC_noreorder(k-1)+1;
     end
 end
 
@@ -93,6 +97,8 @@ arriveTime_S2C=[[1:totalStep] ; [1:totalStep]*T+timeSequence_S2C];
 arriveTimeOrder_S2C=sortrows(arriveTime_S2C', 2)';
 % 控制器接收的数据包时戳顺序
 timeStampList_S2C=arriveTimeOrder_S2C(1,:);
+% 每个采样时刻到达数据包的时间戳，首行向下按顺序排列
+timeStampSquare_S2C=zeros(d+1,totalStep);
 
 % 根据时延确定乱序数据包的集合
 disorderingPoint=[]; % 乱序时刻的集合
@@ -168,11 +174,12 @@ end
 
 % 绘图
 figure(1)
+set(gcf,'Position',[100,400,700,500]);
 t=T*(1:totalStep);
 subplot(2,1,1);
 plot(delayPoint*T,timeSequenceIntDraw*T,'*k',disorderingPoint*T,zeros(length(disorderingPoint),1),'ok',dropoutPoint*T,d*T,'xk');
 axis([0 totalStep*T -0.5*T (d+1)*T]);
-legend('时延','执行发生乱序的采样时刻','主动丢失的数据包');
+legend('数据包的时延','执行器发生乱序的时刻','主动丢弃的数据包','Orientation','horizontal','Location','best');
 xlabel('时间k');
 ylabel('\tau _k');
 grid on
@@ -250,7 +257,7 @@ for i=1:(2*d+1)
 end
 
 % ********************************************************************************** %
-%{
+% 第0组
 % 不存在时延和丢包情况下的动态矩阵控制算法
 for k=1:totalStep
     % 初始时刻，对相应值进行初始化
@@ -309,6 +316,88 @@ end
 
 % 实际使用控制量序列
 figure(2)
+stairs((1:totalStep)*T,U_control(1:totalStep),'-k');
+grid on
+hold on
+
+% 系统输出曲线
+figure(3)
+plot((1:totalStep)*T,Y_outputValue(1:totalStep),'-k');
+grid on
+hold on
+
+%{
+% ********************************************************************************** %
+% 第 1 组
+% 问题：时延和乱序
+% 方式：执行器，处理乱序（到达的数据包中选取时间戳最新的数据包）；控制器，处理乱序（主动丢包）
+for k=1:totalStep
+    % 初始时刻，对相应值进行初始化
+    if k==1
+        % 控制量初始化
+        U_control=zeros(1,simulationTime);
+        U_control(:,1)=0;
+        % 系统状态值初始化
+        X_state=zeros(2,simulationTime);
+        X_state(:,1)=[0 0]';
+        % 系统输出值初始化
+        Y_outputValue=zeros(1,simulationTime);
+        Y_outputValue(:,1)=C_model_discrete*X_state(:,1);
+        % 控制增量初始化
+        controlIncrement=zeros(M,simulationTime);
+        controlIncrement(:,1)=zeros(M,1);
+        % 初始预测值初始化
+        Y_predictedValue=zeros(N,simulationTime);
+        Y_predictedValue(:,1)=Y_outputValue(1)*ones(N,1);
+        % 实际使用控制增量初始化
+        actualControlValue=zeros(1,simulationTime);
+        % 校正向量初始化
+        h=ones(N,1);
+        % 输出误差初始化
+        error=zeros(1,simulationTime);
+        % Y_setValue=[Sv Sv ... Sv]',参考轨迹，即期望值
+        Y_setValue=ones(P,1)*Sv;
+        continue
+    end
+    
+    % 根据获得输出更新预测输出（校正），并移位，考虑时延，控制器使用收到的最新输出值进行校正
+    % 如果数据包乱序（主动丢包），跳过此次运算
+    if timeSequenceInt(k)==(d+1)
+        % 跳过乱序的数据包
+        Y_predictedValue(:,k+1)=Y_predictedValue(:,k);
+        U_control(:,k)=U_control(:,k-1);
+    else
+        error(k)=Y_outputValue(k)-Y_predictedValue(1,k);
+        tempCorrection=Y_predictedValue(:,k)+correction_h*h*error(k);
+        S=[zeros(N-1,1) eye(N-1);zeros(1,N-1) 1]; % 给出移位矩阵S
+        Y_predictedValue(:,k)=S*tempCorrection;
+        % 根据获得输出计算控制增量，根据传感器-控制器的时延，选取合适的A矩阵计算控制增量
+        % controlIncrement(:,k)=K_gather(1+timeSequenceInt_S2C(k-sigma_S2C(k)),:)*(Y_setValue-Y_predictedValue(1:P,k));
+        
+        % 根据获得输出计算控制增量，不补偿时延
+        controlIncrement(:,k)=K_gather(1,:)*(Y_setValue-Y_predictedValue(1:P,k));
+        
+        % 根据初始控制增量，计算下一时刻输出的初始预测值
+        Y_predictedValue(:,k+1)=Y_predictedValue(:,k)+stepResponse(:,1)*controlIncrement(1,k);
+        
+        U_control(:,k)=U_control(:,k-1)+controlIncrement(1,k);
+    end
+    
+    % 末尾时刻，跳出最后时刻的输出值计算，终止循环
+    if k==totalStep
+       continue; 
+    end
+        
+    % 发送控制量后，计算实际控制量
+    actualControlValue(k)=U_control(k-sigma_SC_reorder(k));
+    
+    X_state(:,k+1) = A_model_discrete * X_state(:,k) + B_model_discrete * U_control(k);
+    Y_outputValue(k+1) = C_model_discrete * X_state(:,k+1);
+    
+end
+
+% 实际使用控制量序列
+figure(2)
 stairs((1:totalStep)*T,U_control(1:totalStep),'-.k');
 grid on
 hold on
@@ -343,7 +432,7 @@ for k=1:totalStep
         Y_predictedValue=zeros(N,simulationTime);
         Y_predictedValue(:,1)=Y_outputValue(1)*ones(N,1);
         % 实际使用控制增量初始化
-        actualControlIncrement=zeros(1,simulationTime);
+        actualControlValue=zeros(1,simulationTime);
         % 校正向量初始化
         h=ones(N,1);
         % 输出误差初始化
@@ -358,37 +447,33 @@ for k=1:totalStep
     if timeSequenceInt(k)==(d+1)
         % 跳过乱序的数据包
         Y_predictedValue(:,k+1)=Y_predictedValue(:,k);
+        U_control(:,k)=U_control(:,k-1);
     else
         error(k)=Y_outputValue(k)-Y_predictedValue(1,k);
         tempCorrection=Y_predictedValue(:,k)+correction_h*h*error(k);
         S=[zeros(N-1,1) eye(N-1);zeros(1,N-1) 1]; % 给出移位矩阵S
         Y_predictedValue(:,k)=S*tempCorrection;
         % 根据获得输出计算控制增量，根据传感器-控制器的时延，选取合适的A矩阵计算控制增量
-        % controlIncrement(:,k)=K_gather(1+timeSequenceInt_S2C(k-sigma_S2C(k)),:)*(Y_setValue-Y_predictedValue(1:P,k));
+        controlIncrement(:,k)=K_gather(1+timeSequenceInt(k),:)*(Y_setValue-Y_predictedValue(1:P,k));
         
         % 根据获得输出计算控制增量，不补偿时延
-        controlIncrement(:,k)=K_gather(1,:)*(Y_setValue-Y_predictedValue(1:P,k));
+        % controlIncrement(:,k)=K_gather(1,:)*(Y_setValue-Y_predictedValue(1:P,k));
         
         % 根据初始控制增量，计算下一时刻输出的初始预测值
         Y_predictedValue(:,k+1)=Y_predictedValue(:,k)+stepResponse(:,1)*controlIncrement(1,k);
+        
+        U_control(:,k)=U_control(:,k-1)+controlIncrement(1,k);
     end
     
     % 末尾时刻，跳出最后时刻的输出值计算，终止循环
     if k==totalStep
        continue; 
     end
-    
-    % 使用最新的控制增量，忽略乱序的控制增量
-    if(sigma_SC_reorder(k)==sigma_SC_reorder(k-1)+1)
-        actualControlIncrement(k)=0;
-    else
-        actualControlIncrement(k)=controlIncrement(1,k-sigma_SC_reorder(k));
-    end
         
-    % 发送控制增量后，计算实际控制量
-    U_control(k)=U_control(k-1)+actualControlIncrement(k);
+    % 发送控制量后，计算实际控制量
+    actualControlValue(k)=U_control(k-sigma_SC_reorder(k));
     
-    X_state(:,k+1) = A_model_discrete * X_state(:,k) + B_model_discrete * U_control(k);
+    X_state(:,k+1) = A_model_discrete * X_state(:,k) + B_model_discrete * actualControlValue(k);
     Y_outputValue(k+1) = C_model_discrete * X_state(:,k+1);
     
 end
@@ -408,88 +493,7 @@ hold on
 % ********************************************************************************** %
 % 第 2 组
 % 问题：时延和乱序
-% 方式：执行器，处理乱序（到达的数据包中选取时间戳最新的数据包）；控制器，处理乱序（主动丢包）
-for k=1:totalStep
-    % 初始时刻，对相应值进行初始化
-    if k==1
-        % 控制量初始化
-        U_control=zeros(1,simulationTime);
-        U_control(:,1)=0;
-        % 系统状态值初始化
-        X_state=zeros(2,simulationTime);
-        X_state(:,1)=[0 0]';
-        % 系统输出值初始化
-        Y_outputValue=zeros(1,simulationTime);
-        Y_outputValue(:,1)=C_model_discrete*X_state(:,1);
-        % 控制增量初始化
-        controlIncrement=zeros(M,simulationTime);
-        controlIncrement(:,1)=zeros(M,1);
-        % 初始预测值初始化
-        Y_predictedValue=zeros(N,simulationTime);
-        Y_predictedValue(:,1)=Y_outputValue(1)*ones(N,1);
-        % 实际使用控制增量初始化
-        actualControlIncrement=zeros(1,simulationTime);
-        % 校正向量初始化
-        h=ones(N,1);
-        % 输出误差初始化
-        error=zeros(1,simulationTime);
-        % Y_setValue=[Sv Sv ... Sv]',参考轨迹，即期望值
-        Y_setValue=ones(P,1)*Sv;
-        continue
-    end
-    
-    % 根据获得输出更新预测输出（校正），并移位，考虑时延，控制器使用收到的最新输出值进行校正
-    % 如果数据包乱序（主动丢包），跳过此次运算
-    if timeSequenceInt(k)==(d+1)
-        % 跳过乱序的数据包
-        Y_predictedValue(:,k+1)=Y_predictedValue(:,k);
-    else
-        error(k)=Y_outputValue(k)-Y_predictedValue(1,k);
-        tempCorrection=Y_predictedValue(:,k)+correction_h*h*error(k);
-        S=[zeros(N-1,1) eye(N-1);zeros(1,N-1) 1]; % 给出移位矩阵S
-        Y_predictedValue(:,k)=S*tempCorrection;
-        % 根据获得输出计算控制增量，根据传感器-控制器的时延，选取合适的A矩阵计算控制增量
-        controlIncrement(:,k)=K_gather(1+timeSequenceInt(k),:)*(Y_setValue-Y_predictedValue(1:P,k));
-        
-        % 根据获得输出计算控制增量，不补偿时延
-        % controlIncrement(:,k)=K_gather(1,:)*(Y_setValue-Y_predictedValue(1:P,k));
-        
-        % 根据初始控制增量，计算下一时刻输出的初始预测值
-        Y_predictedValue(:,k+1)=Y_predictedValue(:,k)+stepResponse(:,1)*controlIncrement(1,k);
-    end
-    
-    % 末尾时刻，跳出最后时刻的输出值计算，终止循环
-    if k==totalStep
-       continue; 
-    end
-    
-    % 使用最新的控制增量，忽略乱序的控制增量
-    if(sigma_SC_reorder(k)==sigma_SC_reorder(k-1)+1)
-        actualControlIncrement(k)=0;
-    else
-        actualControlIncrement(k)=controlIncrement(1,k-sigma_SC_reorder(k));
-    end
-        
-    % 发送控制增量后，计算实际控制量
-    U_control(k)=U_control(k-1)+actualControlIncrement(k);
-    
-    X_state(:,k+1) = A_model_discrete * X_state(:,k) + B_model_discrete * U_control(k);
-    Y_outputValue(k+1) = C_model_discrete * X_state(:,k+1);
-    
-end
-
-% 实际使用控制量序列
-figure(2)
-stairs((1:totalStep)*T,U_control(1:totalStep),'-k');
-grid on
-hold on
-
-% 系统输出曲线
-figure(3)
-plot((1:totalStep)*T,Y_outputValue(1:totalStep),'-k');
-grid on
-hold on
-
+% 方式：执行器，不处理乱序；控制器，处理乱序（主动丢包）
 % ********************************************************************************** %
 % 第 3 组
 % 问题：时延和乱序
@@ -501,6 +505,7 @@ hold on
 for k=1:totalStep
     % 初始时刻，对相应值进行初始化
     if k==1
+        index=k+1;
         % 控制量初始化
         U_control=zeros(1,simulationTime);
         U_control(:,1)=0;
@@ -517,7 +522,7 @@ for k=1:totalStep
         Y_predictedValue=zeros(N,simulationTime);
         Y_predictedValue(:,1)=Y_outputValue(1)*ones(N,1);
         % 实际使用控制增量初始化
-        actualControlIncrement=zeros(1,simulationTime);
+        actualControlValue=zeros(1,simulationTime);
         % 校正向量初始化
         h=ones(N,1);
         % 输出误差初始化
@@ -527,53 +532,53 @@ for k=1:totalStep
         continue
     end
     
-    % 根据获得输出更新预测输出（校正），并移位，考虑时延
-    error(k)=Y_outputValue(timeStampList_S2C(k))-Y_predictedValue(1,k);
-    tempCorrection=Y_predictedValue(:,k)+correction_h*h*error(k);
-    S=[zeros(N-1,1) eye(N-1);zeros(1,N-1) 1]; % 给出移位矩阵S
-    Y_predictedValue(:,k)=S*tempCorrection;
-    
-    % 根据获得输出计算控制增量，A矩阵不根据时延动态变化
-    controlIncrement(:,timeStampList_S2C(k))=K_gather(1,:)*(Y_setValue-Y_predictedValue(1:P,k));
+    % 有数据包到达就开始控制量计算
+    while index<=totalStep && timeStampList_S2C(index)<=k
+        error(index)=Y_outputValue(timeStampList_S2C(index))-Y_predictedValue(1,index);
+        tempCorrection=Y_predictedValue(:,index)+correction_h*h*error(index);
+        S=[zeros(N-1,1) eye(N-1);zeros(1,N-1) 1]; % 给出移位矩阵S
+        Y_predictedValue(:,index)=S*tempCorrection;
+
+        % 根据获得输出计算控制增量，A矩阵不根据时延动态变化
+        controlIncrement(:,timeStampList_S2C(index))=K_gather(1,:)*(Y_setValue-Y_predictedValue(1:P,index));
+
+        U_control(:,index)=U_control(:,index-1)+controlIncrement(1,index);
+        % 根据初始控制增量，计算下一时刻输出的初始预测值
+        Y_predictedValue(:,index+1)=Y_predictedValue(:,index)+stepResponse(:,1)*controlIncrement(1,index);
+        
+        index=index+1;
+    end
     
     % 末尾时刻，跳出最后时刻的输出值计算，终止循环
     if k==totalStep
        continue; 
     end
     
-    % 根据初始控制增量，计算下一时刻输出的初始预测值
-    Y_predictedValue(:,k+1)=Y_predictedValue(:,k)+stepResponse(:,1)*controlIncrement(1,k);
+    % 发送控制量后，计算控制器实际使用的控制量
+    actualControlValue(k)=U_control(k-latestArrive_SC_noreorder(k));
     
-    % 选择最新到达的控制增量（不处理乱序问题）
-    if latestArrive_SC_noreorder(k)==0
-        actualControlIncrement(k)=0; % 无数据包到达
-    else
-        actualControlIncrement(k)=controlIncrement(1,k-latestArrive_SC_noreorder(k)); % 选择最新到达的数据包
-    end
-        
-    % 发送控制增量后，计算控制器实际使用的控制量
-    U_control(k)=U_control(k-1)+actualControlIncrement(k);
-    
-    X_state(:,k+1) = A_model_discrete * X_state(:,k) + B_model_discrete * U_control(k);
+    X_state(:,k+1) = A_model_discrete * X_state(:,k) + B_model_discrete * actualControlValue(k);
     Y_outputValue(k+1) = C_model_discrete * X_state(:,k+1);
     
 end
 
 % 实际使用控制量序列
 figure(2)
+set(gcf,'Position',[1000,400,700,500]);
 stairs((1:totalStep)*T,U_control(1:totalStep),'--k');
-legend('处理乱序问题（不进行时延补偿）','处理乱序问题（时延补偿）','不处理乱序');
+legend('标准情况','处理乱序','不处理乱序');
 xlabel('时间k');
-ylabel('输出y(k)');
+ylabel('实际使用控制量u');
 grid on
 hold on
 
 % 系统输出曲线
 figure(3)
+set(gcf,'Position',[1000,400,700,500]);
 plot((1:totalStep)*T,Y_outputValue(1:totalStep),'--k');
-legend('处理乱序问题（不进行时延补偿）','处理乱序问题（时延补偿）','不处理乱序');
+legend('标准情况','处理乱序','不处理乱序');
 xlabel('时间k');
-ylabel('输出y(k)');
+ylabel('输出y');
 grid on
 hold on
 
